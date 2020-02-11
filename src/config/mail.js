@@ -10,4 +10,4 @@ export default {
         from: 'Equipe GoBarber <noreply@gobarber.com>',
     },
 };
-// AMazon SES, MailGUn, SparkPost,Mandri(Mailchimp)
+// AMazon SES, MailGUn, SparkPost,Mandri(Mailchimp) producao
