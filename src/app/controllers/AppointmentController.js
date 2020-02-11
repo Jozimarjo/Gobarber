@@ -5,6 +5,7 @@ import Appointment from '../models/Appointment';
 import User from '../models/User';
 import File from '../models/File';
 import Notification from '../schemas/Notification';
+import Mail from '../../lib/Mail';
 // Usuario comum --> nao prestador de serviço
 class AppointmentController {
     async index(req, res) {
@@ -113,22 +114,34 @@ class AppointmentController {
     }
 
     async delete(req, res) {
-        const appointment = await Appointment.findByPk(req.params.id);
+        const appointment = await Appointment.findByPk(req.params.id, {
+            include: [
+                {
+                    model: User,
+                    as: 'provider',
+                    attributes: ['name', 'email'],
+                },
+            ],
+        });
 
         if (appointment.user_id !== req.userId)
-            return res.status(401).json({
+            res.status(401).json({
                 error: 'Voce nao tem permissao para cancelar esse servico',
             });
         const dateWithSub = subHours(appointment.date, 2);
 
         if (isBefore(dateWithSub, new Date()))
-            return res.status(401).json({
+            res.status(401).json({
                 error:
                     'Voce so pode cancelar um agendamento com 2 horas de antecedencia',
             });
         appointment.canceled_at = new Date();
         await appointment.save();
-
+        await Mail.sendMail({
+            to: `${appointment.provider.name} <${appointment.provider.email}>`,
+            subject: 'Agendamento Cancelado',
+            text: 'Voce tem um Novo cancelamento',
+        });
         res.json(appointment);
     }
 }
