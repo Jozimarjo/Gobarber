@@ -1,8 +1,11 @@
 import * as Yup from 'yup';
-import { startOfHour, parseISO, isBefore } from 'date-fns';
+import { startOfHour, parseISO, isBefore, format, subHours } from 'date-fns';
+import pt from 'date-fns/locale/pt';
 import Appointment from '../models/Appointment';
 import User from '../models/User';
 import File from '../models/File';
+import Notification from '../schemas/Notification';
+import Mail from '../../lib/Mail';
 // Usuario comum --> nao prestador de serviço
 class AppointmentController {
     async index(req, res) {
@@ -44,17 +47,25 @@ class AppointmentController {
             return res.status(400).json({ error: 'Validation fails' });
 
         const { provider_id, date } = req.body;
-        console.log('CHEGAMOS NO STORE ', date, ' --- ', provider_id);
         /**
-         * Checar se o usario e um provedor de Serviço
+         * Checar se o provider_id e um provedor de Serviço
          */
         const isProvider = await User.findOne({
             where: { id: provider_id, provider: true },
         });
         if (!isProvider)
-            res.status(401).json({
+            return res.status(401).json({
                 error: 'você só pode criar compromissos com fornecedores',
             });
+
+        /**
+         * Checar se o prestador de servico e diferente de quem esta agendando o servico
+         */
+        if (req.userId === provider_id)
+            return res.status(401).json({
+                error: 'Voce nao pode agendar um servico para si mesmo',
+            });
+
         /**
          * Checando se a data e superior a atual
          */
@@ -79,14 +90,73 @@ class AppointmentController {
             return res.status(400).json({
                 error: 'Data indisponivel ',
             });
-        console.log('CHEGAMOS NO STORE ', hourStart, ' --- ', provider_id);
 
         const appointment = await Appointment.create({
             user_id: req.userId,
             provider_id,
             date: hourStart,
         });
+
+        /**
+         * Notify appointment provider
+         */
+        const user = await User.findByPk(req.userId);
+        const formattedDate = format(
+            hourStart,
+            "'dia' dd 'de' MMMM', as' H:mm'h'",
+            { locale: pt }
+        );
+        await Notification.create({
+            content: `Novo agendamento de ${user.name} para o ${formattedDate}`,
+            user: provider_id,
+        });
         return res.json(appointment);
+    }
+
+    async delete(req, res) {
+        const appointment = await Appointment.findByPk(req.params.id, {
+            include: [
+                {
+                    model: User,
+                    as: 'provider',
+                    attributes: ['name', 'email'],
+                },
+                {
+                    model: User,
+                    as: 'user',
+                    attributes: ['name'],
+                },
+            ],
+        });
+
+        if (appointment.user_id !== req.userId)
+            res.status(401).json({
+                error: 'Voce nao tem permissao para cancelar esse servico',
+            });
+        const dateWithSub = subHours(appointment.date, 2);
+
+        if (isBefore(dateWithSub, new Date()))
+            res.status(401).json({
+                error:
+                    'Voce so pode cancelar um agendamento com 2 horas de antecedencia',
+            });
+        appointment.canceled_at = new Date();
+        await appointment.save();
+        await Mail.sendMail({
+            to: `${appointment.provider.name} <${appointment.provider.email}>`,
+            subject: 'Agendamento Cancelado',
+            template: 'cancellation',
+            context: {
+                provider: appointment.provider.name,
+                user: appointment.user.name,
+                date: format(
+                    appointment.date,
+                    "'dia' dd 'de' MMMM', as' H:mm'h'",
+                    { locale: pt }
+                ),
+            },
+        });
+        res.json(appointment);
     }
 }
 export default new AppointmentController();
