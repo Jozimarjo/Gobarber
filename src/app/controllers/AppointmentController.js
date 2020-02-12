@@ -5,7 +5,8 @@ import Appointment from '../models/Appointment';
 import User from '../models/User';
 import File from '../models/File';
 import Notification from '../schemas/Notification';
-import Mail from '../../lib/Mail';
+import CancellationMail from '../jobs/CancellationMail';
+import Queue from '../../lib/Queue';
 // Usuario comum --> nao prestador de serviço
 class AppointmentController {
     async index(req, res) {
@@ -130,31 +131,21 @@ class AppointmentController {
         });
 
         if (appointment.user_id !== req.userId)
-            res.status(401).json({
+            return res.status(401).json({
                 error: 'Voce nao tem permissao para cancelar esse servico',
             });
         const dateWithSub = subHours(appointment.date, 2);
 
         if (isBefore(dateWithSub, new Date()))
-            res.status(401).json({
+            return res.status(401).json({
                 error:
                     'Voce so pode cancelar um agendamento com 2 horas de antecedencia',
             });
         appointment.canceled_at = new Date();
         await appointment.save();
-        await Mail.sendMail({
-            to: `${appointment.provider.name} <${appointment.provider.email}>`,
-            subject: 'Agendamento Cancelado',
-            template: 'cancellation',
-            context: {
-                provider: appointment.provider.name,
-                user: appointment.user.name,
-                date: format(
-                    appointment.date,
-                    "'dia' dd 'de' MMMM', as' H:mm'h'",
-                    { locale: pt }
-                ),
-            },
+        console.log('CancellationMail.key ', CancellationMail.key);
+        await Queue.add(CancellationMail.key, {
+            appointment,
         });
         res.json(appointment);
     }
